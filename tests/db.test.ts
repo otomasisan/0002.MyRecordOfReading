@@ -112,4 +112,35 @@ describe('Store', () => {
     const s2 = new Store(new SQL.Database(db.export()), () => {}, clock);
     expect(s2.listBooks()[0]).toMatchObject({ title: 'こころ', tags: ['小説'], timesFinished: 1 });
   });
+
+  it('can register a book again after deleting one, even after a save', async () => {
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    const s = new Store(db, () => db.export(), clock); // export() turns foreign keys off
+    const b = s.addBook({ info: info(), tags: ['小説'], status: 'reading' });
+    s.addSession(b.rounds[0].id, 30);
+    s.addTakeaway(b.rounds[0].id, 'メモ');
+    s.deleteBook(b.id);
+    const again = s.addBook({ info: info({ isbn13: '9784003101018' }), tags: [], status: 'reading' });
+    expect(again.rounds).toHaveLength(1);
+    expect(again.totalMinutes).toBe(0);
+    expect(again.rounds[0].takeaways).toEqual([]);
+    expect(s.listTags()).toEqual([]);
+  });
+
+  it('cleans up rows left behind by deleted books on startup', async () => {
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    const s1 = new Store(db, () => {}, clock);
+    const b = s1.addBook({ info: info(), tags: ['小説'], status: 'reading' });
+    s1.addSession(b.rounds[0].id, 30);
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.run('DELETE FROM books WHERE id = ?', [b.id]); // what older versions did
+    let saved = 0;
+    const s2 = new Store(db, () => saved++, clock);
+    expect(saved).toBe(1);
+    const again = s2.addBook({ info: info({ isbn13: '9784003101018' }), tags: [], status: 'reading' });
+    expect(again.rounds).toHaveLength(1);
+    expect(again.totalMinutes).toBe(0);
+  });
 });

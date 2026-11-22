@@ -84,6 +84,25 @@ export class Store {
     private clock: Clock = systemClock,
   ) {
     db.exec(SCHEMA);
+    this.removeOrphans();
+  }
+
+  /**
+   * sql.js turns foreign keys off again whenever the database is exported
+   * (saved), so ON DELETE CASCADE cannot be relied on. Older versions left
+   * rows of deleted books behind; clean them up on startup.
+   */
+  private removeOrphans() {
+    const changes = () => Number(this.one('SELECT total_changes() AS n')?.n ?? 0);
+    const before = changes();
+    this.db.exec(`
+      DELETE FROM reads WHERE book_id NOT IN (SELECT id FROM books);
+      DELETE FROM book_tags WHERE book_id NOT IN (SELECT id FROM books);
+      DELETE FROM takeaways WHERE read_id NOT IN (SELECT id FROM reads);
+      DELETE FROM sessions WHERE read_id NOT IN (SELECT id FROM reads);
+      DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM book_tags);
+    `);
+    if (changes() !== before) this.onChange();
   }
 
   private all(sql: string, params: SqlValue[] = []): Row[] {
@@ -109,6 +128,8 @@ export class Store {
   }
 
   private write<T>(fn: () => T): T {
+    // Re-enable after every save (export) resets it; it is ignored inside a transaction.
+    this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec('BEGIN');
     try {
       const out = fn();
@@ -238,6 +259,12 @@ export class Store {
 
   deleteBook(id: number) {
     this.write(() => {
+      // Delete child rows explicitly instead of relying on ON DELETE CASCADE.
+      const reads = 'SELECT id FROM reads WHERE book_id = ?';
+      this.db.run(`DELETE FROM sessions WHERE read_id IN (${reads})`, [id]);
+      this.db.run(`DELETE FROM takeaways WHERE read_id IN (${reads})`, [id]);
+      this.db.run('DELETE FROM reads WHERE book_id = ?', [id]);
+      this.db.run('DELETE FROM book_tags WHERE book_id = ?', [id]);
       this.db.run('DELETE FROM books WHERE id = ?', [id]);
       this.db.run('DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM book_tags)');
     });
