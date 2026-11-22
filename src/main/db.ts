@@ -1,5 +1,6 @@
 import type { Database, SqlValue } from 'sql.js';
-import type { Book, BookInfo, NewBookInput, ReadRound, ReadStatus } from '../shared/types';
+import type { Book, BookInfo, NewBookInput, ReadRound, ReadStatus, Settings, StatsSource } from '../shared/types';
+import { DEFAULT_SETTINGS } from '../shared/types';
 
 const SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -52,7 +53,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_date ON sessions(date);
-PRAGMA user_version = 1;
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS milestones (
+  key TEXT PRIMARY KEY,
+  achieved_on TEXT NOT NULL
+);
+PRAGMA user_version = 2;
 `;
 
 export interface Clock {
@@ -217,6 +226,62 @@ export class Store {
 
   private touchBook(bookId: number) {
     this.db.run('UPDATE books SET updated_at = ? WHERE id = ?', [this.clock.now(), bookId]);
+  }
+
+  /** Raw rows for the statistics. */
+  statsSource(): StatsSource {
+    const sessions = this.all(
+      `SELECT s.date, s.minutes, r.book_id FROM sessions s JOIN reads r ON r.id = s.read_id ORDER BY s.date`,
+    ).map((r) => ({ date: String(r.date), minutes: Number(r.minutes), bookId: Number(r.book_id) }));
+    const reads = this.all('SELECT book_id, round_no, status, finished_on, rating FROM reads').map((r) => ({
+      bookId: Number(r.book_id),
+      roundNo: Number(r.round_no),
+      status: r.status as ReadStatus,
+      finishedOn: (r.finished_on as string | null) ?? null,
+      rating: r.rating == null ? null : Number(r.rating),
+    }));
+    const books = this.all('SELECT id, title FROM books').map((r) => ({ id: Number(r.id), title: String(r.title) }));
+    const tags = this.all('SELECT bt.book_id, t.name FROM book_tags bt JOIN tags t ON t.id = bt.tag_id').map((r) => ({
+      bookId: Number(r.book_id),
+      tag: String(r.name),
+    }));
+    const takeaways = this.all(
+      `SELECT k.id, k.text, b.title FROM takeaways k JOIN reads r ON r.id = k.read_id JOIN books b ON b.id = r.book_id ORDER BY k.id`,
+    ).map((r) => ({ id: Number(r.id), text: String(r.text), title: String(r.title) }));
+    return { sessions, reads, books, tags, takeaways };
+  }
+
+  getSettings(): Settings {
+    const rows = Object.fromEntries(this.all('SELECT key, value FROM settings').map((r) => [String(r.key), String(r.value)]));
+    const num = (k: string, d: number) => (rows[k] !== undefined && Number.isFinite(Number(rows[k])) ? Number(rows[k]) : d);
+    return { goalBooks: num('goalBooks', DEFAULT_SETTINGS.goalBooks), goalHours: num('goalHours', DEFAULT_SETTINGS.goalHours) };
+  }
+
+  setSettings(patch: Partial<Settings>): Settings {
+    this.write(() => {
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined) continue;
+        if (!(Number.isInteger(v) && v >= 0 && v <= 100000)) throw new Error('目標は0以上の整数で入力してください');
+        this.db.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [k, String(v)]);
+      }
+    });
+    return this.getSettings();
+  }
+
+  achievedMilestones(): Record<string, string> {
+    return Object.fromEntries(this.all('SELECT key, achieved_on FROM milestones').map((r) => [String(r.key), String(r.achieved_on)]));
+  }
+
+  /** Records milestones reached for the first time and returns their keys. */
+  recordMilestones(keys: string[]): string[] {
+    const known = this.achievedMilestones();
+    const fresh = keys.filter((k) => !known[k]);
+    if (fresh.length) {
+      this.write(() => {
+        for (const k of fresh) this.db.run('INSERT INTO milestones (key, achieved_on) VALUES (?, ?)', [k, this.clock.today()]);
+      });
+    }
+    return fresh;
   }
 
   // ---- writes --------------------------------------------------------

@@ -143,4 +143,27 @@ describe('Store', () => {
     expect(again.rounds).toHaveLength(1);
     expect(again.totalMinutes).toBe(0);
   });
+
+  it('stores settings with defaults and validation', () => {
+    expect(store.getSettings()).toEqual({ goalBooks: 24, goalHours: 0 });
+    expect(store.setSettings({ goalBooks: 30, goalHours: 200 })).toEqual({ goalBooks: 30, goalHours: 200 });
+    expect(() => store.setSettings({ goalBooks: -1 })).toThrow();
+  });
+
+  it('records each milestone once with the day it was reached', () => {
+    expect(store.recordMilestones(['books-1'])).toEqual(['books-1']);
+    today = '2026-11-25';
+    expect(store.recordMilestones(['books-1', 'streak-7'])).toEqual(['streak-7']);
+    expect(store.achievedMilestones()).toEqual({ 'books-1': '2026-11-21', 'streak-7': '2026-11-25' });
+  });
+
+  it('exposes raw rows for statistics', () => {
+    const b = store.addBook({ info: info(), tags: ['小説'], status: 'reading' });
+    store.addSession(b.rounds[0].id, 30);
+    store.addTakeaway(b.rounds[0].id, 'メモ');
+    const src = store.statsSource();
+    expect(src.sessions).toEqual([{ date: '2026-11-21', minutes: 30, bookId: b.id }]);
+    expect(src.tags).toEqual([{ bookId: b.id, tag: '小説' }]);
+    expect(src.takeaways).toEqual([{ id: expect.any(Number), text: 'メモ', title: 'こころ' }]);
+  });
 });

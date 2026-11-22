@@ -1,10 +1,12 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import initSqlJs from 'sql.js';
-import { Store } from './db';
+import { Store, systemClock } from './db';
+import { dashboard, labelOf, reachedMilestones, toCsv, yearStats } from './stats';
 import { downloadCover, fetchBookInfo, normalizeIsbn } from './isbn';
-import type { LookupResult, NewBookInput } from '../shared/types';
+import type { Dashboard, LookupResult, NewBookInput } from '../shared/types';
+import { STATUS_LABEL } from '../shared/types';
 
 let store: Store;
 let dbPath: string;
@@ -64,6 +66,39 @@ function registerIpc() {
   handle('startReread', (bookId: number) => store.startReread(bookId));
   handle('addSession', (readId: number, minutes: number) => store.addSession(readId, minutes));
   handle('todayMinutes', () => store.todayMinutes());
+  handle('getDashboard', (): Dashboard => {
+    const today = systemClock.today();
+    const src = store.statsSource();
+    const settings = store.getSettings();
+    const fresh = store.recordMilestones(reachedMilestones(src, settings, today));
+    return {
+      ...dashboard(src, settings, today),
+      newMilestones: fresh.map((key) => ({ key, label: labelOf(key), remaining: '', achievedOn: today })),
+    };
+  });
+  handle('getYearStats', (year: number) => yearStats(store.statsSource(), Number(year) || 0, systemClock.today(), store.achievedMilestones()));
+  handle('getSettings', () => store.getSettings());
+  handle('setSettings', (patch) => store.setSettings(patch));
+  handle('exportCsv', async () => {
+    const win = BrowserWindow.getFocusedWindow();
+    const stamp = systemClock.today().replace(/-/g, '');
+    const opts = { defaultPath: `読書記録_${stamp}.csv`, filters: [{ name: 'CSV', extensions: ['csv'] }] };
+    const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts);
+    if (res.canceled || !res.filePath) return null;
+    const rows: (string | number | null)[][] = [
+      ['ISBN', '書名', '著者', '出版社', 'タグ', '回', '状態', '開始日', '読了日', '評価', '読書時間（分）', '所感', '日常に活かせそうなこと'],
+    ];
+    for (const b of store.listBooks()) {
+      for (const r of b.rounds) {
+        rows.push([
+          b.isbn13, b.title, b.authors, b.publisher, b.tags.join(' / '), r.roundNo, STATUS_LABEL[r.status],
+          r.startedOn, r.finishedOn, r.rating, r.minutes, r.impression, r.takeaways.map((t) => t.text).join(' / '),
+        ]);
+      }
+    }
+    fs.writeFileSync(res.filePath, toCsv(rows), 'utf8');
+    return res.filePath;
+  });
 }
 
 function createWindow() {
