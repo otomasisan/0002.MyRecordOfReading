@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Book, ReadStatus } from '../shared/types';
 import { STATUS_LABEL } from '../shared/types';
 import { formatClock, formatMinutes } from './api';
@@ -6,6 +7,25 @@ import { Cover } from './Cover';
 import type { Timer } from './timer';
 
 const TABS: (ReadStatus | 'all')[] = ['all', 'tsundoku', 'reading', 'done', 'stopped'];
+
+type Sort = 'updated' | 'added' | 'title' | 'minutes' | 'rating';
+const SORTS: Record<Sort, string> = { updated: '最近更新した順', added: '登録した順', title: '書名順', minutes: '読書時間が長い順', rating: '評価が高い順' };
+
+const bestRating = (b: Book) => Math.max(0, ...b.rounds.map((r) => r.rating ?? 0));
+const compare: Record<Sort, (a: Book, b: Book) => number> = {
+  updated: () => 0, // the store already returns the most recently updated first
+  added: (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id,
+  title: (a, b) => a.title.localeCompare(b.title, 'ja'),
+  minutes: (a, b) => b.totalMinutes - a.totalMinutes,
+  rating: (a, b) => bestRating(b) - bestRating(a),
+};
+
+/** Matches title, author, publisher, tags and notes, ignoring case and width. */
+function matches(b: Book, q: string): boolean {
+  const norm = (s: string) => s.normalize('NFKC').toLowerCase();
+  const hay = norm([b.title, b.authors, b.publisher, b.isbn13 ?? '', ...b.tags, ...b.rounds.flatMap((r) => [r.impression, ...r.takeaways.map((t) => t.text)])].join(' '));
+  return norm(q).split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+}
 
 export const current = (b: Book) => b.rounds[b.rounds.length - 1];
 
@@ -22,9 +42,16 @@ export function BookList(props: {
   onOpen: (id: number) => void;
 }) {
   const { books, filter, setFilter, timer, onOpen } = props;
-  const shown = books.filter(
-    (b) => (filter.status === 'all' || current(b).status === filter.status) && (!filter.tag || b.tags.includes(filter.tag)),
-  );
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<Sort>('updated');
+  const shown = books
+    .filter(
+      (b) =>
+        (filter.status === 'all' || current(b).status === filter.status) &&
+        (!filter.tag || b.tags.includes(filter.tag)) &&
+        (!query.trim() || matches(b, query)),
+    )
+    .sort(compare[sort]);
 
   return (
     <section className="list">
@@ -34,11 +61,16 @@ export function BookList(props: {
             {k === 'all' ? 'すべて' : STATUS_LABEL[k]}
           </button>
         ))}
+        <span className="spacer" />
         {filter.tag && (
           <button className="chip filter" onClick={() => setFilter({ ...filter, tag: null })}>
             タグ：{filter.tag} ✕
           </button>
         )}
+        <input className="search" type="search" aria-label="本を検索" placeholder="書名・著者・タグ・メモで検索" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <select aria-label="並べ替え" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+          {(Object.keys(SORTS) as Sort[]).map((k) => <option key={k} value={k}>{SORTS[k]}</option>)}
+        </select>
       </div>
       {books.length === 0 ? (
         <div className="empty">

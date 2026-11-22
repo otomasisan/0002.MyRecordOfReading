@@ -77,6 +77,65 @@ export interface NewBookInput {
   status: ReadStatus;
 }
 
+export interface Settings {
+  /** Books to finish per year (0 = no goal). */
+  goalBooks: number;
+  /** Hours to read per year (0 = no goal). */
+  goalHours: number;
+}
+
+export const DEFAULT_SETTINGS: Settings = { goalBooks: 24, goalHours: 0 };
+
+export interface StatsSource {
+  sessions: { date: string; minutes: number; bookId: number }[];
+  reads: { bookId: number; roundNo: number; status: ReadStatus; finishedOn: string | null; rating: number | null }[];
+  books: { id: number; title: string }[];
+  tags: { bookId: number; tag: string }[];
+  takeaways: { id: number; text: string; title: string }[];
+}
+
+export interface Milestone {
+  key: string;
+  label: string;
+  /** What is still needed, e.g. "あと3冊". Empty once achieved. */
+  remaining: string;
+  achievedOn: string | null;
+}
+
+export interface Dashboard {
+  todayMinutes: number;
+  streak: number;
+  longestStreak: number;
+  year: number;
+  finishedThisYear: number;
+  minutesThisYear: number;
+  projectedBooks: number;
+  thisMonthMinutes: number;
+  lastMonthMinutes: number;
+  settings: Settings;
+  recall: { text: string; title: string } | null;
+  /** Milestones reached since the last check. */
+  newMilestones: Milestone[];
+}
+
+export interface YearStats {
+  /** 0 = all time. */
+  year: number;
+  years: number[];
+  finished: number;
+  minutes: number;
+  avgRating: number | null;
+  /** Months of the year, or years for all time. */
+  bars: { label: string; minutes: number; finished: number }[];
+  byBook: { bookId: number; title: string; minutes: number; timesRead: number }[];
+  byTag: { tag: string; minutes: number; books: number }[];
+  ratings: number[]; // index 0 = ★1
+  calendar: { date: string; minutes: number }[];
+  streak: number;
+  longestStreak: number;
+  milestones: Milestone[];
+}
+
 export interface Api {
   listBooks(): Promise<Book[]>;
   getBook(id: number): Promise<Book | null>;
@@ -94,4 +153,10 @@ export interface Api {
   startReread(bookId: number): Promise<Book>;
   addSession(readId: number, minutes: number): Promise<Book>;
   todayMinutes(): Promise<number>;
+  getDashboard(): Promise<Dashboard>;
+  getYearStats(year: number): Promise<YearStats>;
+  getSettings(): Promise<Settings>;
+  setSettings(patch: Partial<Settings>): Promise<Settings>;
+  /** Asks where to save and writes a CSV. Returns the path, or null if cancelled. */
+  exportCsv(): Promise<string | null>;
 }
