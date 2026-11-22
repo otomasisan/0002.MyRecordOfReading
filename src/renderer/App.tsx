@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Book, LookupResult, ReadStatus } from '../shared/types';
+import type { Book, Dashboard, LookupResult, Milestone, ReadStatus } from '../shared/types';
 import { api, errorMessage, formatMinutes } from './api';
 import { BookDetail } from './BookDetail';
 import { BookList } from './BookList';
+import { DashboardStrip } from './DashboardStrip';
 import { RegisterPanel } from './RegisterPanel';
+import { SettingsView } from './SettingsView';
+import { StatsView } from './StatsView';
 import { TimerBar, useTimer } from './timer';
 
 export type Filter = { status: ReadStatus | 'all'; tag: string | null };
+type View = 'list' | 'stats' | 'settings';
 
 export function App() {
   const [books, setBooks] = useState<Book[]>([]);
   const [tags, setTags] = useState<{ name: string; count: number }[]>([]);
-  const [today, setToday] = useState(0);
+  const [dash, setDash] = useState<Dashboard | null>(null);
+  const [view, setView] = useState<View>('list');
   const [selected, setSelected] = useState<number | null>(null);
   const [filter, setFilter] = useState<Filter>({ status: 'all', tag: null });
   const [isbn, setIsbn] = useState('');
@@ -19,12 +24,16 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [celebrate, setCelebrate] = useState<Milestone[]>([]);
+  const [statsVersion, setStatsVersion] = useState(0);
 
   const refresh = useCallback(async () => {
-    const [b, t, m] = await Promise.all([api().listBooks(), api().listTags(), api().todayMinutes()]);
+    const [b, t, d] = await Promise.all([api().listBooks(), api().listTags(), api().getDashboard()]);
     setBooks(b);
     setTags(t);
-    setToday(m);
+    setDash(d);
+    setStatsVersion((v) => v + 1);
+    if (d.newMilestones.length) setCelebrate((c) => [...c, ...d.newMilestones]);
   }, []);
 
   useEffect(() => {
@@ -65,9 +74,11 @@ export function App() {
     setBusy(false);
   };
 
-  const showList = () => {
+  const go = (v: View) => {
+    setView(v);
     setSelected(null);
     setLookup(null);
+    setError(null);
   };
 
   const onRegistered = async (_book: Book, message: string) => {
@@ -77,23 +88,32 @@ export function App() {
     setToast(message);
   };
 
+  const open = (id: number) => {
+    setView('list');
+    setLookup(null);
+    setSelected(id);
+  };
+
   const selectedBook = books.find((b) => b.id === selected) ?? null;
+  const onList = view === 'list' && !selectedBook;
 
   return (
     <div className="app">
       <nav className="side" aria-label="メニュー">
         <h1>読書記録</h1>
-        <button aria-current={!selectedBook && !filter.tag} onClick={() => { showList(); setFilter({ status: 'all', tag: null }); }}>
+        <button aria-current={onList && !filter.tag} onClick={() => { go('list'); setFilter({ status: 'all', tag: null }); }}>
           本の一覧<span className="num">{books.length}</span>
         </button>
+        <button aria-current={view === 'stats'} onClick={() => go('stats')}>統計</button>
+        <button aria-current={view === 'settings'} onClick={() => go('settings')}>設定</button>
         {tags.length > 0 && (
           <div className="side-tags">
             <small>タグ</small>
             {tags.map((t) => (
               <button
                 key={t.name}
-                aria-current={filter.tag === t.name}
-                onClick={() => { showList(); setFilter((f) => ({ ...f, tag: f.tag === t.name ? null : t.name })); }}
+                aria-current={onList && filter.tag === t.name}
+                onClick={() => { go('list'); setFilter((f) => ({ ...f, tag: f.tag === t.name ? null : t.name })); }}
               >
                 {t.name}<span className="num">{t.count}</span>
               </button>
@@ -103,20 +123,32 @@ export function App() {
       </nav>
 
       <main className="main">
-        <div className="topline">
-          <div className="today">
-            <span className="lbl">今日の読書</span>
-            <b className="num">{formatMinutes(today)}</b>
+        {(timer.running || timer.stopped) && (
+          <div className="topline">
+            <TimerBar timer={timer} />
           </div>
-          <TimerBar timer={timer} />
-        </div>
+        )}
 
-        {selectedBook ? (
+        {celebrate.length > 0 && (
+          <div className="celebrate" role="status">
+            <div>
+              <b>節目を達成しました</b>
+              <span>{celebrate.map((m) => m.label).join('、')}</span>
+            </div>
+            <button className="btn ghost sm" onClick={() => setCelebrate([])}>閉じる</button>
+          </div>
+        )}
+
+        {view === 'stats' ? (
+          <StatsView version={statsVersion} onOpen={open} onError={setError} />
+        ) : view === 'settings' ? (
+          <SettingsView onSaved={async (m) => { await refresh(); setToast(m); }} onError={setError} />
+        ) : selectedBook ? (
           <BookDetail
             book={selectedBook}
             allTags={tags.map((t) => t.name)}
             timer={timer}
-            onBack={showList}
+            onBack={() => setSelected(null)}
             onChanged={refresh}
             onDeleted={async () => { setSelected(null); await refresh(); setToast('削除しました'); }}
             onError={setError}
@@ -124,6 +156,7 @@ export function App() {
           />
         ) : (
           <>
+            {dash && <DashboardStrip dash={dash} onGoal={() => go('settings')} />}
             <form className="isbn" onSubmit={onLookup}>
               <label htmlFor="isbn">ISBN</label>
               <input
@@ -145,7 +178,7 @@ export function App() {
                 allTags={tags.map((t) => t.name)}
                 onCancel={() => setLookup(null)}
                 onDone={onRegistered}
-                onOpen={(id) => { setLookup(null); setSelected(id); }}
+                onOpen={open}
                 onError={setError}
               />
             )}
