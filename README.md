@@ -39,6 +39,8 @@ USBバーコードリーダーはキーボード入力として扱われるの�
 
 構成：Electron + React + TypeScript、データはSQLite（sql.js。ネイティブモジュールのビルドが不要）。
 
+Windows 11 のスマートアプリコントロールは署名のないネイティブ部品（`.node` や `.exe`）の実行を止めるため、`package.json` の `overrides` で Rollup と esbuild を WebAssembly 版（`@rollup/wasm-node`、`esbuild-wasm`）に置き換えています。ビルドは少し遅くなりますが、結果は同じです。
+
 ```
 src/main      メインプロセス（DB、ISBN検索、IPC）
 src/preload   画面に公開するAPI
