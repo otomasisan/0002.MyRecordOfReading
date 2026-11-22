@@ -41,6 +41,8 @@ USBバーコードリーダーはキーボード入力として扱われるの�
 
 Windows 11 のスマートアプリコントロールは署名のないネイティブ部品（`.node` や `.exe`）の実行を止めるため、`package.json` の `overrides` で Rollup と esbuild を WebAssembly 版（`@rollup/wasm-node`、`esbuild-wasm`）に置き換えています。ビルドは少し遅くなりますが、結果は同じです。
 
+また、一部のWindows環境ではNode.jsの乱数取得（`crypto.getRandomValues`）が `entropy source strength too weak` で失敗し、esbuild（WebAssembly版）が起動できません。`npm run build:renderer` は `scripts/build-renderer.cjs` 経由で Vite を起動し、乱数取得が失敗したときだけ代わりの値を使うようにしています（`scripts/random-fallback.cjs`。esbuild内部のハッシュ用で、安全性には関係しません）。
+
 ```
 src/main      メインプロセス（DB、ISBN検索、IPC）
 src/preload   画面に公開するAPI
